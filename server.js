@@ -218,6 +218,17 @@ app.post('/api/trades', (req, res) => {
   res.json(trades)
 })
 
+// Test notification endpoint — fires a real BUY alert through the server's ntfy config
+app.post('/api/test-notification', async (req, res) => {
+  const settings = loadSettings()
+  if (!settings.ntfyTopic) {
+    return res.status(400).json({ ok: false, error: 'No ntfy topic saved in settings' })
+  }
+  await notify('BUY', 'Test alert — server notifications are working ✓', { ...settings, quietHoursEnabled: false })
+  console.log('[test] Test notification sent')
+  res.json({ ok: true, topic: settings.ntfyTopic })
+})
+
 // Catch-all: serve React app for any non-API route
 app.get('*', (req, res) => {
   if (existsSync(DIST_DIR)) {

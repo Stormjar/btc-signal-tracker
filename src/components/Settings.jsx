@@ -5,6 +5,7 @@ export default function Settings({ settings, onSave }) {
   const [form, setForm] = useState(settings)
   const [permGranted, setPermGranted] = useState(Notification.permission === 'granted')
   const [saved, setSaved] = useState(false)
+  const [testStatus, setTestStatus] = useState(null) // null | 'sending' | 'ok' | 'fail'
 
   function set(key, val) {
     setForm(f => ({ ...f, [key]: val }))
@@ -14,6 +15,18 @@ export default function Settings({ settings, onSave }) {
     onSave(form)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  async function handleTestNotification() {
+    setTestStatus('sending')
+    try {
+      const res = await fetch('/api/test-notification', { method: 'POST' })
+      const data = await res.json()
+      setTestStatus(data.ok ? 'ok' : 'fail')
+    } catch {
+      setTestStatus('fail')
+    }
+    setTimeout(() => setTestStatus(null), 4000)
   }
 
   async function handleRequestPermission() {
@@ -86,6 +99,22 @@ export default function Settings({ settings, onSave }) {
           <p>2. Tap + and subscribe to your topic above</p>
           <p>3. Done — BUY/SELL alerts go straight to your phone</p>
         </div>
+
+        {/* Test button — fires a real notification through the server */}
+        {form.ntfyTopic && (
+          <button
+            onClick={handleTestNotification}
+            disabled={testStatus === 'sending'}
+            className="w-full py-2.5 rounded-xl font-semibold text-sm border transition-all
+              disabled:opacity-50
+              border-secondary/30 text-secondary hover:border-secondary hover:text-primary"
+          >
+            {testStatus === 'sending' && 'Sending…'}
+            {testStatus === 'ok' && '✓ Notification sent — check your phone'}
+            {testStatus === 'fail' && '✗ Failed — is your topic saved?'}
+            {testStatus === null && 'Send test notification via server'}
+          </button>
+        )}
 
         <div className="flex items-center gap-3">
           <Toggle
