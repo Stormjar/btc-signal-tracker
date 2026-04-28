@@ -6,6 +6,7 @@ import SignalBadge from './components/SignalBadge.jsx'
 import PaperTrader from './components/PaperTrader.jsx'
 import Compounder from './components/Compounder.jsx'
 import Settings from './components/Settings.jsx'
+import LivePosition from './components/LivePosition.jsx'
 
 // Poll the server for current state every 30 seconds
 const POLL_INTERVAL_MS = 30 * 1000
@@ -44,6 +45,8 @@ export default function App() {
   const [trades, setTrades] = useState([])
   const [portfolio, setPortfolio] = useState({ potValue: 0, totalSaved: 0, wins: 0, losses: 0, totalPnl: 0, openBuy: null })
   const [settings, setSettings] = useState(() => loadSettings())
+  const [livePosition, setLivePosition] = useState(null)
+  const [liveHistory, setLiveHistory] = useState([])
   const [showSettings, setShowSettings] = useState(false)
   const [showChart, setShowChart] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -68,6 +71,8 @@ export default function App() {
       }
       if (data.trades) setTrades(data.trades)
       if (data.portfolio) setPortfolio(data.portfolio)
+      if (data.livePosition !== undefined) setLivePosition(data.livePosition)
+      if (data.liveHistory) setLiveHistory(data.liveHistory)
 
       // Sync settings displayed in UI with server settings
       if (data.settings) setSettings(s => ({ ...s, ...data.settings }))
@@ -96,6 +101,30 @@ export default function App() {
     }
     setSettings(newSettings)
     setShowSettings(false)
+  }
+
+  async function handleLiveBuy(gbpSpent, btcPrice) {
+    const res = await fetch('/api/live-position/buy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gbpSpent, btcPrice }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    setLivePosition(data.position)
+    setLiveHistory(data.history)
+  }
+
+  async function handleLiveSell(btcPrice) {
+    const res = await fetch('/api/live-position/sell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ btcPrice }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    setLivePosition(data.position)
+    setLiveHistory(data.history)
   }
 
   async function handleManualTrade(type) {
@@ -177,6 +206,18 @@ export default function App() {
               profitTargetPct={settings.profitTargetPct}
             />
           </section>
+        )}
+
+        {/* Live position tracker */}
+        {!loading && (
+          <LivePosition
+            position={livePosition}
+            history={liveHistory}
+            currentPrice={price}
+            signal={signalData.signal}
+            onBuy={handleLiveBuy}
+            onSell={handleLiveSell}
+          />
         )}
 
         {/* Paper trading */}

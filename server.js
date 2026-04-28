@@ -26,6 +26,8 @@ const __dirname = dirname(__filename)
 const DATA_DIR = process.env.DATA_DIR || join(__dirname, 'data')
 const TRADES_FILE = join(DATA_DIR, 'trades.json')
 const SETTINGS_FILE = join(DATA_DIR, 'settings.json')
+const LIVE_FILE = join(DATA_DIR, 'live-position.json')
+const LIVE_HISTORY_FILE = join(DATA_DIR, 'live-history.json')
 const DIST_DIR = join(__dirname, 'dist')
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
@@ -62,6 +64,30 @@ function loadSettings() {
 
 function saveSettings(settings) {
   writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2))
+}
+
+function loadLivePosition() {
+  if (!existsSync(LIVE_FILE)) return null
+  try { return JSON.parse(readFileSync(LIVE_FILE, 'utf8')) } catch { return null }
+}
+
+function saveLivePosition(pos) {
+  if (pos === null) {
+    if (existsSync(LIVE_FILE)) writeFileSync(LIVE_FILE, 'null')
+  } else {
+    writeFileSync(LIVE_FILE, JSON.stringify(pos, null, 2))
+  }
+}
+
+function loadLiveHistory() {
+  if (!existsSync(LIVE_HISTORY_FILE)) return []
+  try { return JSON.parse(readFileSync(LIVE_HISTORY_FILE, 'utf8')) } catch { return [] }
+}
+
+function appendLiveHistory(entry) {
+  const history = loadLiveHistory()
+  history.push(entry)
+  writeFileSync(LIVE_HISTORY_FILE, JSON.stringify(history, null, 2))
 }
 
 // ── Notification ──────────────────────────────────────────────────────────────
@@ -190,7 +216,9 @@ app.get('/api/state', (req, res) => {
   const settings = loadSettings()
   const trades = loadTrades()
   const portfolio = computePortfolio(trades, settings.startingPot, settings.savingsSplitPct)
-  res.json({ ...currentState, trades, portfolio })
+  const livePosition = loadLivePosition()
+  const liveHistory = loadLiveHistory()
+  res.json({ ...currentState, trades, portfolio, livePosition, liveHistory })
 })
 
 app.get('/api/settings', (req, res) => {
@@ -216,6 +244,54 @@ app.post('/api/trades', (req, res) => {
   trades.push({ id: Date.now(), type, price, timestamp: new Date().toISOString(), auto: false })
   saveTrades(trades)
   res.json(trades)
+})
+
+// Live position — what you've actually bought on Coinbase
+app.get('/api/live-position', (req, res) => {
+  const pos = loadLivePosition()
+  const history = loadLiveHistory()
+  res.json({ position: pos, history })
+})
+
+// Record a real buy: { gbpSpent, btcPrice }
+app.post('/api/live-position/buy', (req, res) => {
+  const { gbpSpent, btcPrice } = req.body
+  if (!gbpSpent || !btcPrice) return res.status(400).json({ error: 'gbpSpent and btcPrice required' })
+  const existing = loadLivePosition()
+  if (existing) return res.status(400).json({ error: 'Already have an open position — sell first' })
+  const pos = {
+    gbpSpent: parseFloat(gbpSpent),
+    btcPrice: parseFloat(btcPrice),
+    btcAmount: parseFloat(gbpSpent) / parseFloat(btcPrice),
+    openedAt: new Date().toISOString(),
+  }
+  saveLivePosition(pos)
+  console.log(`[live] BUY recorded: £${gbpSpent} @ £${btcPrice}`)
+  res.json({ position: pos, history: loadLiveHistory() })
+})
+
+// Record a real sell: { btcPrice } — closes the open position
+app.post('/api/live-position/sell', (req, res) => {
+  const { btcPrice } = req.body
+  if (!btcPrice) return res.status(400).json({ error: 'btcPrice required' })
+  const pos = loadLivePosition()
+  if (!pos) return res.status(400).json({ error: 'No open position to sell' })
+  const sellPrice = parseFloat(btcPrice)
+  const gbpReturned = pos.btcAmount * sellPrice
+  const pnl = gbpReturned - pos.gbpSpent
+  const pnlPct = (pnl / pos.gbpSpent) * 100
+  const entry = {
+    ...pos,
+    sellPrice,
+    gbpReturned: parseFloat(gbpReturned.toFixed(2)),
+    pnl: parseFloat(pnl.toFixed(2)),
+    pnlPct: parseFloat(pnlPct.toFixed(2)),
+    closedAt: new Date().toISOString(),
+  }
+  appendLiveHistory(entry)
+  saveLivePosition(null)
+  console.log(`[live] SELL recorded: £${gbpReturned.toFixed(2)} returned (${pnl >= 0 ? '+' : ''}£${pnl.toFixed(2)}, ${pnlPct.toFixed(2)}%)`)
+  res.json({ position: null, history: loadLiveHistory(), closed: entry })
 })
 
 // Test notification endpoint — fires a real BUY alert through the server's ntfy config
